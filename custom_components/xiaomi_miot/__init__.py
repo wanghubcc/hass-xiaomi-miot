@@ -185,6 +185,15 @@ CONFIG_SCHEMA = vol.Schema(
 )
 
 
+async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+    # 注册事件监听器
+    async def handle_event(event):
+        # 更新设备状态
+        await update_device_state()
+
+    hass.bus.async_listen('xiaomi_miot_event', handle_event)
+
+
 async def async_setup(hass, hass_config: dict):
     init_integration_data(hass)
     config = hass_config.get(DOMAIN) or {}
@@ -298,13 +307,13 @@ async def async_setup_xiaomi_cloud(hass: hass_core.HomeAssistant, config_entry: 
         hass.data[DOMAIN]['miot_specs'][model] = await MiotSpec.async_from_type(hass, urn)
         ext = d.get('extra') or {}
         mif = {
-            'ap':     {'ssid': d.get('ssid'), 'bssid': d.get('bssid'), 'rssi': d.get('rssi')},
-            'netif':  {'localIp': d.get('localip'), 'gw': '', 'mask': ''},
+            'ap': {'ssid': d.get('ssid'), 'bssid': d.get('bssid'), 'rssi': d.get('rssi')},
+            'netif': {'localIp': d.get('localip'), 'gw': '', 'mask': ''},
             'fw_ver': ext.get('fw_version', ''),
             'hw_ver': ext.get('hw_version', ''),
-            'mac':    d.get('mac'),
-            'model':  model,
-            'token':  d.get(CONF_TOKEN),
+            'mac': d.get('mac'),
+            'model': model,
+            'token': d.get(CONF_TOKEN),
         }
         conn = entry.get(CONF_CONN_MODE, DEFAULT_CONN_MODE)
         cfg = {
@@ -448,7 +457,6 @@ async def async_reload_integration_config(hass, config):
 
 
 async def async_setup_component_services(hass):
-
     async def async_get_token(call):
         nam = call.data.get('name')
         kwd = f'{nam}'.strip().lower()
@@ -567,6 +575,7 @@ async def _handle_device_registry_event(hass: hass_core.HomeAssistant):
         if device.name_by_user in ['delete', 'remove', '删除']:
             # remove from Hass
             registry.async_remove_device(device.id)
+
     hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, updated)
 
 
@@ -962,7 +971,8 @@ class MiioEntity(BaseEntity):
         })
         ret = result == self._success_result
         if not ret:
-            self.logger.info('%s: Send miio command: %s(%s) failed, result: %s', self.name_model, method, params, result)
+            self.logger.info('%s: Send miio command: %s(%s) failed, result: %s', self.name_model, method, params,
+                             result)
         if kwargs.get('throw'):
             persistent_notification.create(
                 self.hass,
@@ -1830,7 +1840,7 @@ class MiotEntity(MiioEntity):
         if did is None:
             did = self.miot_did or f'prop.{siid}.{piid}'
         pms = {
-            'did':  str(did),
+            'did': str(did),
             'siid': siid,
             'piid': piid,
             'value': value,
@@ -1892,10 +1902,10 @@ class MiotEntity(MiioEntity):
         if did is None:
             did = self.miot_did or f'action-{siid}-{aiid}'
         pms = {
-            'did':  str(did),
+            'did': str(did),
             'siid': siid,
             'aiid': aiid,
-            'in':   params or [],
+            'in': params or [],
         }
         dly = 1
         eno = 1
@@ -2426,8 +2436,18 @@ class BaseSubEntity(BaseEntity):
         if data:
             self.update_attrs(data, update_parent=False)
 
+    # async def async_update(self):
+    #     await self.hass.async_add_executor_job(self.update)
+
     async def async_update(self):
-        await self.hass.async_add_executor_job(self.update)
+        # 获取设备状态
+        state = await self._miot_device.async_get_state()
+
+        # 发送事件
+        self.hass.bus.async_fire('xiaomi_miot_event', {'state': state})
+
+        # 更新设备状态
+        self._state = state
 
     def update_attrs(self, attrs: dict, update_parent=True):
         self._state_attrs.update(attrs or {})
